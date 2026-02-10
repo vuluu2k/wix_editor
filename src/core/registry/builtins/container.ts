@@ -58,6 +58,13 @@ export const containerComponent: ComponentRegistryEntry = {
       ],
     },
     {
+      title: 'Layout',
+      fields: [
+        { type: 'grid-layout', key: 'layout', label: 'Grid Configuration', target: 'layout' },
+        { type: 'select', key: 'overflow', label: 'Overflow', options: [{ label: 'Visible', value: 'visible' }, { label: 'Hidden', value: 'hidden' }, { label: 'Scroll', value: 'scroll' }], target: 'style' }
+      ]
+    },
+    {
       title: 'Design',
       fields: [
         { type: 'color', key: 'backgroundColor', label: 'Background Color', target: 'style' },

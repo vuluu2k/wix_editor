@@ -169,3 +169,73 @@ export function pixelToGrid(
     marginTop,
   }
 }
+
+/**
+ * Calculate which cell of a Container Grid the mouse is hovering over.
+ * Returns the column/row index (1-based) and the pixel rect of that cell relative to the container.
+ */
+export function calcContainerGridCell(
+  x: number, // relative to container
+  y: number, // relative to container
+  containerWidth: number,
+  containerHeight: number,
+  layout: { cols: number | string, rows: number | string, rowGap?: number, colGap?: number, padding?: any }
+): { col: number, row: number, cellRect: { x: number, y: number, width: number, height: number } } {
+  const cols = typeof layout.cols === 'number' ? layout.cols : 1
+  const rows = typeof layout.rows === 'number' ? layout.rows : 1
+  const colGap = layout.colGap ?? 0
+  const rowGap = layout.rowGap ?? 0
+  const padding = layout.padding || { top: 0, left: 0, right: 0, bottom: 0 }
+
+  const availableWidth = Math.max(0, containerWidth - padding.left - padding.right)
+  const availableHeight = Math.max(0, containerHeight - padding.top - padding.bottom)
+
+  // Calculate generic cell size (assuming equal distribution for now)
+  const totalColGap = Math.max(0, (cols - 1) * colGap)
+  const colWidth = (availableWidth - totalColGap) / cols
+
+  const totalRowGap = Math.max(0, (rows - 1) * rowGap)
+  const rowHeight = (availableHeight - totalRowGap) / rows
+
+  // Find Column
+  let col = 1
+  for (let i = 0; i < cols; i++) {
+    const cellX = padding.left + i * (colWidth + colGap)
+    // Snap to closest center or just containment?
+    // Containment + gap split
+    if (x < cellX + colWidth + colGap / 2) {
+      col = i + 1
+      break
+    }
+    col = i + 1
+  }
+
+  // Find Row
+  let row = 1
+  for (let i = 0; i < rows; i++) {
+    const cellY = padding.top + i * (rowHeight + rowGap)
+    if (y < cellY + rowHeight + rowGap / 2) {
+      row = i + 1
+      break
+    }
+    row = i + 1
+  }
+
+  // Clamp
+  col = Math.max(1, Math.min(col, cols))
+  row = Math.max(1, Math.min(row, rows))
+
+  const finalX = padding.left + (col - 1) * (colWidth + colGap)
+  const finalY = padding.top + (row - 1) * (rowHeight + rowGap)
+
+  return {
+    col,
+    row,
+    cellRect: {
+      x: finalX,
+      y: finalY,
+      width: colWidth,
+      height: rowHeight
+    }
+  }
+}

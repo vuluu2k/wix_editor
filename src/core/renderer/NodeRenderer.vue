@@ -8,7 +8,7 @@
     @mouseleave="handleMouseLeave"
     @mousedown.stop="handleMouseDown"
   >
-    <!-- Container: render children recursively -->
+    <!-- Container/Section: render children recursively -->
     <template v-if="isContainer">
       <NodeRenderer
         v-for="childId in node.children"
@@ -61,7 +61,8 @@ const entry = computed(() => {
 })
 
 const isContainer = computed(() => {
-  return node.value?.type === 'container'
+  const t = node.value?.type
+  return t === 'container' || t === 'section'
 })
 
 const computedStyles = computed(() => {
@@ -78,8 +79,21 @@ const computedStyles = computed(() => {
     ? { cursor: 'move', userSelect: 'none' as const } 
     : {}
 
-  // If Root Node: Apply Grid Container Styles
-  if (!node.value.parentId && props.computedGrid) {
+  // ─── Root Node: Vertical section stack ─────────────────
+  if (!node.value.parentId) {
+    return {
+      ...styles,
+      ...common,
+      display: 'flex',
+      flexDirection: 'column' as const,
+      width: '100%',
+      minHeight: '100%',
+      position: 'relative' as const,
+    }
+  }
+
+  // ─── Section Node: Uses page grid for its children ─────
+  if (node.value.type === 'section' && props.computedGrid) {
     const { columns, gutterWidth, marginWidth } = props.computedGrid
     return {
       ...styles,
@@ -89,8 +103,31 @@ const computedStyles = computed(() => {
       columnGap: `${gutterWidth}px`,
       paddingLeft: `${marginWidth}px`,
       paddingRight: `${marginWidth}px`,
-      alignItems: 'start', // Ensure items aligned to top
+      alignItems: 'start',
       position: 'relative' as const,
+      width: '100%',
+    }
+  }
+
+  // ─── Grid Layout (Container with grid config) ──────────
+  if (node.value.layout?.type === 'grid') {
+    const { cols, rows, rowGap, colGap, padding, gap } = node.value.layout
+    const finalRowGap = rowGap ?? gap ?? 0
+    const finalColGap = colGap ?? gap ?? 0
+    
+    return {
+      ...styles,
+      ...common,
+      display: 'grid',
+      gridTemplateColumns: typeof cols === 'number' ? `repeat(${cols}, 1fr)` : cols || '1fr',
+      gridTemplateRows: typeof rows === 'number' ? `repeat(${rows}, 1fr)` : rows || 'auto',
+      rowGap: `${finalRowGap}px`,
+      columnGap: `${finalColGap}px`,
+      paddingTop: `${padding?.top ?? 0}px`,
+      paddingRight: `${padding?.right ?? 0}px`,
+      paddingBottom: `${padding?.bottom ?? 0}px`,
+      paddingLeft: `${padding?.left ?? 0}px`,
+      alignContent: 'start',
     }
   }
 
@@ -128,3 +165,4 @@ function handleMouseDown(e: MouseEvent): void {
   }
 }
 </script>
+

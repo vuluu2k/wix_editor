@@ -13,11 +13,25 @@ export interface EditorNode {
   props: Record<string, unknown>
   styles: Responsive<Record<string, string | number>>
   layoutMode: 'flow' | 'absolute'
+  layout?: {
+    type: 'flex' | 'grid'
+    direction?: 'row' | 'column'
+    justify?: string
+    align?: string
+    gap?: number
+    padding?: { top: number; right: number; bottom: number; left: number }
+    cols?: number | string
+    rows?: number | string
+    rowGap?: number
+    colGap?: number
+  }
   grid?: Responsive<{
     colStart: number
     colSpan: number
     rowStart?: number
     rowSpan?: number
+    offsetX?: number
+    offsetY?: number
     marginLeft?: number
     marginRight?: number
     marginTop?: number

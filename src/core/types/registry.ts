@@ -1,6 +1,8 @@
 import type { EditorNode } from './document'
-import type { InspectorField } from './inspector'
 import type { VNode } from 'vue'
+import type { InspectorField } from './inspector'
+
+export type { InspectorField }
 
 export interface InspectorSection {
   title: string

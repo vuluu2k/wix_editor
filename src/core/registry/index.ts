@@ -34,7 +34,9 @@ export function hasComponent(type: string): boolean {
 import { containerComponent } from './builtins/container'
 import { textComponent } from './builtins/text'
 import { buttonComponent } from './builtins/button'
+import { sectionComponent } from './builtins/section'
 
 registerComponent(containerComponent)
 registerComponent(textComponent)
 registerComponent(buttonComponent)
+registerComponent(sectionComponent)

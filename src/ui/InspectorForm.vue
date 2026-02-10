@@ -49,6 +49,13 @@
         :options="field.options"
         @change="(val: string) => handleChange(field, val)"
       />
+
+      <!-- Grid Layout Control -->
+      <GridLayoutControl
+        v-else-if="field.type === 'grid-layout'"
+        :value="values[field.key] as Record<string, any>"
+        @update="(val) => handleChange(field, val)"
+      />
     </div>
 
     <div v-if="fields.length === 0" class="text-gray-500 text-xs text-center py-4">
@@ -58,7 +65,8 @@
 </template>
 
 <script setup lang="ts">
-import type { InspectorField } from '@/core/types/inspector'
+import type { InspectorField } from '@/core/types/registry'
+import GridLayoutControl from '@/ui/GridLayoutControl.vue' // Import the new control
 
 const props = defineProps<{
   fields: InspectorField[]
@@ -66,18 +74,18 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  update: [payload: { key: string; value: unknown; target: 'props' | 'style' }]
+  update: [payload: { key: string; value: unknown; target: 'props' | 'style' | 'layout' }]
 }>()
 
 function handleChange(field: InspectorField, value: unknown): void {
-  emit('update', { key: field.key, value, target: field.target })
+  emit('update', { key: field.key, value, target: field.target || 'props' })
 }
 
 function handleNumberChange(field: InspectorField, val: number | null): void {
   if (val === null) return
   const unit = field.type === 'number' ? field.unit : undefined
   const value = unit ? `${val}${unit}` : val
-  emit('update', { key: field.key, value, target: field.target })
+  emit('update', { key: field.key, value, target: field.target || 'props' })
 }
 
 function parseNumber(value: unknown): number | undefined {

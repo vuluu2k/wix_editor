@@ -35,7 +35,7 @@ export function computeGridPosition(
   computedGrid: ComputedGrid | null,
   breakpoint: Breakpoint
 ): Record<string, string | number> | null {
-  if (!node.grid || !computedGrid) return null
+  if (!node.grid) return null
 
   // Merge grid data with breakpoint
   const gridData = mergeResponsive(node.grid, breakpoint) as NodeGridData

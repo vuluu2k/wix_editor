@@ -11,29 +11,64 @@ function createNode(partial: Partial<EditorNode> & { id: string; type: string })
   }
 }
 
+// ─── Root: vertical section stack ────────────────────────
 const rootNode = createNode({
   id: 'root-1',
   type: 'container',
   parentId: null,
+  children: ['section-hero', 'section-content'],
+  props: {},
+  styles: {
+    base: {
+      width: '100%',
+      minHeight: '600px',
+    },
+  },
+  layoutMode: 'flow',
+  meta: { name: 'Page Root' },
+})
+
+// ─── Section: Hero ───────────────────────────────────────
+const heroSection = createNode({
+  id: 'section-hero',
+  type: 'section',
+  parentId: 'root-1',
   children: ['text-1', 'button-1'],
   props: {},
   styles: {
     base: {
-      minHeight: '600px',
-      padding: '0px',
-      position: 'relative',
       width: '100%',
-      height: '100%',
+      minHeight: '400px',
+      backgroundColor: '#f8fafc',
     },
   },
-  layoutMode: 'absolute',
-  meta: { name: 'Root Container' },
+  layoutMode: 'flow',
+  meta: { name: 'Hero Section' },
 })
 
+// ─── Section: Content ────────────────────────────────────
+const contentSection = createNode({
+  id: 'section-content',
+  type: 'section',
+  parentId: 'root-1',
+  children: ['text-2'],
+  props: {},
+  styles: {
+    base: {
+      width: '100%',
+      minHeight: '300px',
+      backgroundColor: '#ffffff',
+    },
+  },
+  layoutMode: 'flow',
+  meta: { name: 'Content Section' },
+})
+
+// ─── Elements inside Hero ────────────────────────────────
 const textNode = createNode({
   id: 'text-1',
   type: 'text',
-  parentId: 'root-1',
+  parentId: 'section-hero',
   children: [],
   props: { content: 'Hello, World! Welcome to Wix Editor.' },
   styles: {
@@ -43,7 +78,6 @@ const textNode = createNode({
       color: '#1a1a2e',
     },
   },
-  // Grid-based positioning: starts at col 1, spans 6 columns, 40px from top
   grid: {
     base: {
       colStart: 1,
@@ -60,7 +94,7 @@ const textNode = createNode({
 const buttonNode = createNode({
   id: 'button-1',
   type: 'button',
-  parentId: 'root-1',
+  parentId: 'section-hero',
   children: [],
   props: { label: 'Click Me' },
   styles: {
@@ -75,7 +109,6 @@ const buttonNode = createNode({
       cursor: 'pointer',
     },
   },
-  // Grid-based positioning: starts at col 1, spans 3 columns, 120px from top
   grid: {
     base: {
       colStart: 1,
@@ -89,12 +122,41 @@ const buttonNode = createNode({
   meta: { name: 'CTA Button' },
 })
 
+// ─── Elements inside Content ─────────────────────────────
+const contentText = createNode({
+  id: 'text-2',
+  type: 'text',
+  parentId: 'section-content',
+  children: [],
+  props: { content: 'This is a content section. Add more elements here.' },
+  styles: {
+    base: {
+      fontSize: '16px',
+      color: '#64748b',
+    },
+  },
+  grid: {
+    base: {
+      colStart: 1,
+      colSpan: 8,
+      marginLeft: 0,
+      marginRight: 0,
+      marginTop: 30,
+    },
+  },
+  layoutMode: 'flow',
+  meta: { name: 'Content Text' },
+})
+
 export const demoDocument: DocumentModel = {
   rootId: 'root-1',
   nodes: {
     'root-1': rootNode,
+    'section-hero': heroSection,
+    'section-content': contentSection,
     'text-1': textNode,
     'button-1': buttonNode,
+    'text-2': contentText,
   },
   pages: [
     {

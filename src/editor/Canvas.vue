@@ -33,35 +33,35 @@
         @node-mousedown="handleNodeMouseDown"
       />
 
-      <!-- Distance Indicator Lines (pin-to-edge like Wix) -->
-      <!-- Distance lines: only 2 nearest edges, hidden during drag -->
-      <template v-if="visibleDistanceLines && store.mode === 'edit'">
+      <!-- Grid Cell Guides (cell-boundary snap indicators) -->
+      <template v-if="gridCellGuides.length > 0 && store.mode === 'edit'">
         <div
-          v-for="line in visibleDistanceLines"
-          :key="line.key"
-          :class="line.cls"
-          :style="line.style"
-        >
-          <span class="dist-label">{{ line.value }}</span>
-        </div>
-      </template>
-
-      <!-- Grid Connection Guides -->
-      <template v-if="gridGuides && store.mode === 'edit'">
-        <div
-          v-for="guide in gridGuides"
+          v-for="guide in gridCellGuides"
           :key="guide.key"
           class="grid-guide-line"
-          :style="{
-            left: `${guide.x}px`,
-            top: `${guide.y}px`,
-            width: `${guide.width}px`,
-          }"
+          :class="guide.orientation === 'v' ? 'grid-guide-vertical' : ''"
+          :style="guide.style"
         >
           <div class="chk-dot-start" />
           <div class="chk-dot-end" />
-          <span v-if="guide.width > 20" class="guide-label">{{ Math.round(guide.width) }}</span>
+          <span v-if="guide.distance > 5" class="guide-label">{{ Math.round(guide.distance) }}</span>
         </div>
+      </template>
+
+      <!-- Smart Alignment Guides (Red) -->
+      <template v-if="smartGuides.length > 0 && store.mode === 'edit'">
+        <div
+            v-for="(guide, idx) in smartGuides"
+            :key="'align-' + idx"
+            class="alignment-guide-line"
+            :class="guide.type === 'vertical' ? 'alignment-guide-vertical' : 'alignment-guide-horizontal'"
+            :style="{
+                left: guide.type === 'vertical' ? `${guide.position}px` : `${guide.start}px`,
+                top: guide.type === 'vertical' ? `${guide.start}px` : `${guide.position}px`,
+                height: guide.type === 'vertical' ? `${guide.end - guide.start}px` : undefined,
+                width: guide.type === 'vertical' ? undefined : `${guide.end - guide.start}px`
+            }"
+        />
       </template>
 
       <!-- Selection Overlay -->
@@ -91,6 +91,18 @@
         :style="hoverRect"
       />
 
+      <!-- Drag Grid Cell Overlay -->
+      <div
+        v-if="dragGridCell"
+        class="absolute pointer-events-none border-2 border-dashed border-blue-500 bg-blue-500/10 z-50 transition-all duration-75"
+        :style="{
+            left: `${dragGridCell.rect.x}px`,
+            top: `${dragGridCell.rect.y}px`,
+            width: `${dragGridCell.rect.width}px`,
+            height: `${dragGridCell.rect.height}px`
+        }"
+      />
+
       <!-- Snap Guide Lines -->
       <div
         v-for="(line, idx) in activeSnapLines"
@@ -110,18 +122,21 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch, reactive } from 'vue'
 import NodeRenderer from '@/core/renderer/NodeRenderer.vue'
 import GridOverlay from '@/core/grid/GridOverlay.vue'
 import { useEditorStore } from '@/core/store/editor.store'
 import { mergeResponsive } from '@/core/types/document'
-import { computeGrid, pixelToGrid, getColZoneLeft, getColZoneWidth, type NodeGridData } from '@/core/grid/gridEngine'
-import { snapRectToGrid } from '@/core/grid/snapping'
+import { computeGrid, pixelToGrid, getColZoneLeft, getColZoneWidth, calcContainerGridCell, type NodeGridData } from '@/core/grid/gridEngine'
+import { snapRectToGrid, calcAlignmentGuides, type AlignmentGuide } from '@/core/grid/snapping'
 import type { GridConfig } from '@/core/types/grid'
 
 const store = useEditorStore()
+
+// State
 const canvasRef = ref<HTMLElement | null>(null)
 const artboardRef = ref<HTMLElement | null>(null)
+
 
 const artboardWidth = computed(() => {
   const bp = store.activeBreakpoint
@@ -139,6 +154,13 @@ const gridConfig = computed((): GridConfig => {
 })
 
 const computedGridData = computed(() => computeGrid(gridConfig.value, artboardWidth.value))
+
+// State for Smart Guides
+const smartGuides = ref<AlignmentGuide[]>([])
+let dragOtherRects: { x: number; y: number; width: number; height: number; id: string }[] = []
+
+// State for Container Grid Snapping
+const dragGridCell = ref<{ col: number, row: number, rect: { x: number, y: number, width: number, height: number }, containerId: string } | null>(null)
 
 // ─── Selection & Hover Rects ─────────────────────────────
 const selectionRect = ref<Record<string, string> | null>(null)
@@ -197,93 +219,126 @@ const selectedNodeLabel = computed(() => {
   return store.selectedNode.meta?.name || store.selectedNode.type
 })
 
-// ─── Distance Indicators (only 2 nearest edges, hidden during drag) ──
-const visibleDistanceLines = computed(() => {
-  // Hide while dragging or resizing
-  if (isDragging.value) return null
-  if (!store.selectedNodeId || store.selectedNodeId === store.document.rootId) return null
+// ─── Grid Cell Guides (cell-boundary snap indicators) ────
+interface GridCellGuide {
+  key: string
+  orientation: 'h' | 'v'
+  style: Record<string, string | number>
+  distance: number
+}
+
+const gridCellGuides = computed((): GridCellGuide[] => {
+  if (isDragging.value) return []
+  if (!store.selectedNodeId || store.selectedNodeId === store.document.rootId) return []
+  const node = store.document.nodes[store.selectedNodeId]
+  if (!node || !node.grid) return []
+
   const rect = getNodeRectNumbers(store.selectedNodeId)
-  if (!rect) return null
-
-  const artW = artboardWidth.value
-  const artH = artboardRef.value?.clientHeight || 600
-
-  const top = Math.round(rect.top)
-  const left = Math.round(rect.left)
-  const bottom = Math.max(0, Math.round(artH - rect.top - rect.height))
-  const right = Math.max(0, Math.round(artW - rect.left - rect.width))
-
-  const centerX = rect.left + rect.width / 2
-  const centerY = rect.top + rect.height / 2
-
-  const lines: { key: string; cls: string; value: number; style: Record<string, string | number> }[] = []
-
-  // Vertical axis: pick nearest (top or bottom)
-  if (top <= bottom) {
-    if (top > 0) lines.push({
-      key: 'top', cls: 'dist-line-v', value: top,
-      style: { position: 'absolute', left: `${centerX}px`, top: '0px', height: `${rect.top}px`, zIndex: '52' },
-    })
-  } else {
-    if (bottom > 0) lines.push({
-      key: 'bottom', cls: 'dist-line-v', value: bottom,
-      style: { position: 'absolute', left: `${centerX}px`, top: `${rect.top + rect.height}px`, height: `${bottom}px`, zIndex: '52' },
-    })
-  }
-
-  // Horizontal axis: pick nearest (left or right)
-  if (left <= right) {
-    if (left > 0) lines.push({
-      key: 'left', cls: 'dist-line-h', value: left,
-      style: { position: 'absolute', left: '0px', top: `${centerY}px`, width: `${rect.left}px`, zIndex: '52' },
-    })
-  } else {
-    if (right > 0) lines.push({
-      key: 'right', cls: 'dist-line-h', value: right,
-      style: { position: 'absolute', left: `${rect.left + rect.width}px`, top: `${centerY}px`, width: `${right}px`, zIndex: '52' },
-    })
-  }
-
-  return lines.length > 0 ? lines : null
-})
-
-// ─── Grid Connection Guides (Wix-style) ──────────────────
-const gridGuides = computed(() => {
-  if (!store.selectedNodeId || !store.selectedNode?.grid) return null
-  
-  // Use current interaction state if dragging/resizing
-  // But for now, let's use the stored state or the DOM state
-  // DOM state is smoother.
-  const rect = getNodeRectNumbers(store.selectedNodeId)
-  if (!rect) return null
+  if (!rect) return []
 
   const grid = computedGridData.value
-  
-  // Calculate "Live" grid formatting based on current DOM position (rect)
-  // This ensures the guide connects to the column we are currently hovering over/snapping to.
-  const liveGridData = pixelToGrid(rect.left, rect.top, rect.width, grid)
-  
-  if (!liveGridData.colStart) return null
+  if (!grid || !grid.columns.length) return []
 
-  const guides = []
-  const centerY = rect.top + rect.height / 2
+  // Find section offset & height
+  const parentNode = node.parentId ? store.document.nodes[node.parentId] : null
+  let sectionOffsetY = 0
+  let sectionHeight = 400
+  if (parentNode && parentNode.type === 'section') {
+    const sectionEl = document.querySelector(`[data-node-id="${parentNode.id}"]`) as HTMLElement | null
+    const artRect = artboardRef.value?.getBoundingClientRect()
+    if (sectionEl && artRect) {
+      sectionOffsetY = sectionEl.getBoundingClientRect().top - artRect.top
+      sectionHeight = sectionEl.offsetHeight
+    }
+  }
 
-  // 1. Connection to Left Grid Column (Live)
-  const zoneLeft = getColZoneLeft(liveGridData.colStart, grid)
-  
-  guides.push({
-    key: 'grid-left',
-    x: zoneLeft,
-    y: centerY,
-    width: rect.left - zoneLeft,
-    isNegative: rect.left < zoneLeft
-  })
+  // Build all column boundary X positions
+  const boundaries: number[] = []
+  for (const col of grid.columns) {
+    boundaries.push(col.x)
+    boundaries.push(col.x + col.width)
+  }
 
-  // 2. Connection to Right Grid Column (optional, usually we anchor Top/Left)
-  // But resizing uses different anchors.
-  // For now, Left Anchor is the primary one.
+  const elemLeft = rect.left
+  const elemRight = rect.left + rect.width
+  const elemTop = rect.top
+  const elemBottom = rect.top + rect.height
+  const centerY = elemTop + rect.height / 2
+  const centerX = elemLeft + rect.width / 2
 
-  return guides
+  // Find nearest boundary to LEFT edge
+  let nearestLeftBoundary = boundaries[0]
+  let nearestLeftDist = Math.abs(elemLeft - boundaries[0])
+  for (const bx of boundaries) {
+    const d = Math.abs(elemLeft - bx)
+    if (d < nearestLeftDist) { nearestLeftDist = d; nearestLeftBoundary = bx }
+  }
+
+  // Find nearest boundary to RIGHT edge
+  let nearestRightBoundary = boundaries[boundaries.length - 1]
+  let nearestRightDist = Math.abs(elemRight - boundaries[boundaries.length - 1])
+  for (const bx of boundaries) {
+    const d = Math.abs(elemRight - bx)
+    if (d < nearestRightDist) { nearestRightDist = d; nearestRightBoundary = bx }
+  }
+
+  // Top & bottom distances
+  const topDist = elemTop - sectionOffsetY
+  const bottomDist = (sectionOffsetY + sectionHeight) - elemBottom
+
+  // Build all 4 candidates
+  const candidates: GridCellGuide[] = []
+
+  if (nearestLeftDist > 1) {
+    candidates.push({
+      key: 'cell-left', orientation: 'h',
+      style: {
+        position: 'absolute',
+        left: `${Math.min(nearestLeftBoundary, elemLeft)}px`,
+        top: `${centerY}px`,
+        width: `${nearestLeftDist}px`, height: '0px', zIndex: 45,
+      },
+      distance: Math.round(nearestLeftDist),
+    })
+  }
+  if (nearestRightDist > 1) {
+    candidates.push({
+      key: 'cell-right', orientation: 'h',
+      style: {
+        position: 'absolute',
+        left: `${Math.min(elemRight, nearestRightBoundary)}px`,
+        top: `${centerY}px`,
+        width: `${nearestRightDist}px`, height: '0px', zIndex: 45,
+      },
+      distance: Math.round(nearestRightDist),
+    })
+  }
+  if (topDist > 1) {
+    candidates.push({
+      key: 'cell-top', orientation: 'v',
+      style: {
+        position: 'absolute',
+        left: `${centerX}px`, top: `${sectionOffsetY}px`,
+        width: '0px', height: `${topDist}px`, zIndex: 45,
+      },
+      distance: Math.round(topDist),
+    })
+  }
+  if (bottomDist > 1) {
+    candidates.push({
+      key: 'cell-bottom', orientation: 'v',
+      style: {
+        position: 'absolute',
+        left: `${centerX}px`, top: `${elemBottom}px`,
+        width: '0px', height: `${bottomDist}px`, zIndex: 45,
+      },
+      distance: Math.round(bottomDist),
+    })
+  }
+
+  // Return only the 2 nearest guides
+  candidates.sort((a, b) => a.distance - b.distance)
+  return candidates.slice(0, 2)
 })
 
 // ─── Resize Handles ──────────────────────────────────────
@@ -431,6 +486,7 @@ let dragNodeState: {
   startLeft: number
   startTop: number
   nodeWidth: number
+  nodeHeight: number
   moved: boolean
   snapshotSaved: boolean
 } | null = null
@@ -455,9 +511,20 @@ function handleNodeMouseDown(payload: { nodeId: string; event: MouseEvent }): vo
     startLeft: nodeRect.left - artboardRect.left,
     startTop: nodeRect.top - artboardRect.top,
     nodeWidth: nodeRect.width,
+    nodeHeight: nodeRect.height,
     moved: false,
     snapshotSaved: false,
   }
+
+  // Pre-calculate other nodes for smart alignment
+  dragOtherRects = []
+  Object.values(store.document.nodes).forEach(n => {
+      if (n.id === payload.nodeId || n.id === store.document.rootId) return
+      const rect = getNodeRectNumbers(n.id)
+      if (rect) {
+          dragOtherRects.push({ ...rect, x: rect.left, y: rect.top, id: n.id })
+      }
+  })
 
   window.addEventListener('mousemove', onDragNodeMove)
   window.addEventListener('mouseup', onDragNodeEnd)
@@ -480,28 +547,161 @@ function onDragNodeMove(e: MouseEvent): void {
   let newLeft = Math.max(0, dragNodeState.startLeft + dx)
   const newTop = Math.max(0, dragNodeState.startTop + dy)
 
-  // Grid Snapping (X axis)
-  const snapResult = snapRectToGrid(
-    newLeft,
-    dragNodeState.nodeWidth,
-    computedGridData.value,
-    gridConfig.value.snapTolerance
-  )
-  newLeft = snapResult.x
-  activeSnapLines.value = snapResult.snappedLines
+  // 1. Check for Container Grid logic
+  // Find deepest container under mouse
+  // Simple check: iterate dragOtherRects, if inside, check layout logic
+  let bestContainer = null
+  let bestArea = Infinity
 
-  // Convert pixel position to grid data and apply directly for live preview
-  const grid = computedGridData.value
-  const newGridData = pixelToGrid(newLeft, newTop, dragNodeState.nodeWidth, grid)
+  const dragRect = { x: newLeft, y: newTop, width: dragNodeState.nodeWidth, height: dragNodeState.nodeHeight }
+  const dragArea = dragRect.width * dragRect.height
 
-  const node = store.document.nodes[dragNodeState.nodeId]
-  if (node) {
-    // Update grid data directly for live preview (not through store to avoid history spam)
-    if (!node.grid) {
-      node.grid = { base: newGridData }
-    } else {
-      node.grid.base = { ...node.grid.base, ...newGridData }
-    }
+  for (const other of dragOtherRects) {
+      // Check intersection area
+      const xOverlap = Math.max(0, Math.min(dragRect.x + dragRect.width, other.x + other.width) - Math.max(dragRect.x, other.x))
+      const yOverlap = Math.max(0, Math.min(dragRect.y + dragRect.height, other.y + other.height) - Math.max(dragRect.y, other.y))
+      const intersectionArea = xOverlap * yOverlap
+
+      // Threshold: 30% of dragged node area
+      if (intersectionArea > dragArea * 0.3) {
+          const node = store.document.nodes[other.id]
+          if (node && node.layout?.type === 'grid') {
+              // Prefer smallest container by area (deepest)
+              // But ensure we compare apples to apples. 
+              // Actually, bestArea logic (smallest container) is still good.
+              if (other.width * other.height < bestArea) {
+                  bestArea = other.width * other.height
+                  bestContainer = { ...other, node }
+              }
+          }
+      }
+  }
+
+  if (bestContainer) {
+      // Calculate snap to container grid
+      const relX = newLeft - bestContainer.x
+      const relY = newTop - bestContainer.y
+      
+      const snap = calcContainerGridCell(
+          relX, relY, 
+          bestContainer.width, bestContainer.height, 
+          {
+              ...bestContainer.node.layout!,
+              cols: bestContainer.node.layout!.cols ?? 1,
+              rows: bestContainer.node.layout!.rows ?? 1
+          }
+      )
+
+      dragGridCell.value = {
+          col: snap.col,
+          row: snap.row,
+          rect: {
+              x: bestContainer.x + snap.cellRect.x,
+              y: bestContainer.y + snap.cellRect.y,
+              width: snap.cellRect.width,
+              height: snap.cellRect.height
+          },
+          containerId: bestContainer.id
+      }
+      
+      // Snap ghost to cell
+      // Center the node in the cell or fill it? 
+      // For now, let's just highlight the cell and keep ghost flowing?
+      // Or snap ghost to top-left of cell.
+      // Let's snap ghost to cell top-left + some padding validation? 
+      // Actually, if we snap, we should just show the cell highlight and snap the ghost to the cell center/top-left.
+      
+      newLeft = bestContainer.x + snap.cellRect.x
+      // newTop = bestContainer.y + snap.cellRect.y -- Let's not vertical snap hard if we want to drag inside cell?
+      // But grid cell usually means "fills cell" or "aligns to cell".
+      // Let's snap strict for now.
+      
+      // We don't update finalTop/Left variables yet, we just update the ghost visual via store potentially?
+      // Wait, we are calculating finalLeft/Top for `pixelToGrid` below.
+      // If we are in Grid Container mode, `pixelToGrid` (Page Grid) is irrelevant!
+      
+      // We should SKIP the rest of the logic if in Grid Container mode.
+      
+      activeSnapLines.value = []
+      smartGuides.value = []
+      
+      // Note: We are NOT updating the node's position in the store here because that would trigger "Page Grid" logic in renderer.
+      // We rely on the "dragGridCell" overlay to show where it will drop.
+      // But the "ghost" (rendered node) still follows mouse unless we hack it.
+      // Actually, we SHOULD update the node position to match the cell so user sees it in place.
+      // But we need to make sure we don't apply "Page Grid" quantization on it.
+      
+      // Update node visual position directly (no history spam)
+      const node = store.document.nodes[dragNodeState.nodeId]
+      if (node) {
+          // Temporarily force absolute to render at snapped position
+          // We'll reset this on drop
+          const styleBase = node.styles.base || {}
+          styleBase.position = 'absolute'
+          styleBase.left = `${bestContainer.x + snap.cellRect.x}px`
+          styleBase.top = `${bestContainer.y + snap.cellRect.y}px`
+          styleBase.width = `${snap.cellRect.width}px`
+          styleBase.height = `${snap.cellRect.height}px`
+      }
+      
+  } else {
+      dragGridCell.value = null
+      
+      // Standard Logic (Smart Guides + Page Grid)
+      const el = document.querySelector(`[data-node-id="${dragNodeState.nodeId}"]`) as HTMLElement
+      const currentHeight = el ? el.offsetHeight : 50
+      
+      const alignmentResult = calcAlignmentGuides(
+          { x: newLeft, y: newTop, width: dragNodeState.nodeWidth, height: currentHeight, id: dragNodeState.nodeId },
+          dragOtherRects
+      )
+      smartGuides.value = alignmentResult.guides
+
+      let finalLeft = newLeft
+      let finalTop = newTop
+
+      // Check if we snapped to an element (Red Snap)
+      const isSmartX = Math.abs(alignmentResult.snappedRect.x - newLeft) > 0.01
+      const isSmartY = Math.abs(alignmentResult.snappedRect.y - newTop) > 0.01
+
+      if (isSmartX) {
+          finalLeft = alignmentResult.snappedRect.x
+          activeSnapLines.value = [] // Prioritize element alignment over grid line
+      } else {
+          // Grid Snapping (Blue X axis)
+          const snapResult = snapRectToGrid(
+            newLeft,
+            dragNodeState.nodeWidth,
+            computedGridData.value,
+            gridConfig.value.snapTolerance
+          )
+          finalLeft = snapResult.x
+          activeSnapLines.value = snapResult.snappedLines
+      }
+
+      if (isSmartY) {
+          finalTop = alignmentResult.snappedRect.y
+      }
+
+      // Convert pixel position to grid data and apply directly for live preview
+      const grid = computedGridData.value
+      const newGridData = pixelToGrid(finalLeft, finalTop, dragNodeState.nodeWidth, grid)
+
+      const node = store.document.nodes[dragNodeState.nodeId]
+      if (node) {
+        // Update grid data directly for live preview (not through store to avoid history spam)
+        const parentNode = node.parentId ? store.document.nodes[node.parentId] : null
+        const isInGridParent = !node.parentId 
+          || node.parentId === store.document.rootId 
+          || parentNode?.type === 'section'
+        if (isInGridParent) {
+             if (!node.grid) {
+              node.grid = { base: newGridData }
+            } else {
+              node.grid.base = { ...node.grid.base, ...newGridData }
+            }
+        }
+      }
   }
 
   nextTick(updateSelectionRect)
@@ -510,8 +710,31 @@ function onDragNodeMove(e: MouseEvent): void {
 function onDragNodeEnd(): void {
   if (dragNodeState?.moved) {
     const node = store.document.nodes[dragNodeState.nodeId]
-    if (node && node.grid) {
-      // Save grid data through the store (creates undo history)
+    
+    if (dragGridCell.value) {
+        // Handle Drop into Grid Container
+        store.doMoveNode(dragNodeState.nodeId, dragGridCell.value.containerId, -1)
+        
+        // Update Grid Props for Container Child
+        store.doUpdateGrid(dragNodeState.nodeId, {
+            colStart: dragGridCell.value.col,
+            colSpan: 1, // Default to 1 cell
+            rowStart: dragGridCell.value.row,
+            rowSpan: 1,
+            marginLeft: 0,
+            marginRight: 0,
+            marginTop: 0
+        }, store.activeBreakpoint)
+        
+        // Reset absolute positioning styles if any
+        store.doUpdateStyles(dragNodeState.nodeId, {
+            left: 'auto', top: 'auto', position: 'relative'
+        }, store.activeBreakpoint)
+        
+    } else if (node && node.grid) {
+      // Standard Page Grid Drop
+      // Only if parent is Root or non-grid container (flow?)
+      // We assume Page Grid logic applies if not dropped in Grid Cell
       store.doUpdateGrid(
         dragNodeState.nodeId,
         { ...node.grid.base },
@@ -520,6 +743,11 @@ function onDragNodeEnd(): void {
     }
   }
 
+  // Clear guides
+  smartGuides.value = []
+  dragOtherRects = []
+  dragGridCell.value = null
+  
   dragNodeState = null
   activeSnapLines.value = []
   isDragging.value = false
@@ -564,6 +792,35 @@ function handleDragLeave(): void {
   dropCursorPos.value = null
 }
 
+// Find the section under a given Y coordinate (relative to artboard)
+function findSectionAtY(y: number): string | null {
+  const root = store.document.nodes[store.document.rootId]
+  if (!root) return null
+
+  for (const childId of root.children) {
+    const child = store.document.nodes[childId]
+    if (child?.type === 'section') {
+      const el = document.querySelector(`[data-node-id="${childId}"]`) as HTMLElement | null
+      const artRect = artboardRef.value?.getBoundingClientRect()
+      if (el && artRect) {
+        const sectionRect = el.getBoundingClientRect()
+        const sectionTop = sectionRect.top - artRect.top
+        const sectionBottom = sectionTop + sectionRect.height
+        if (y >= sectionTop && y <= sectionBottom) {
+          return childId
+        }
+      }
+    }
+  }
+
+  // Fallback: return the last section if below all
+  for (let i = root.children.length - 1; i >= 0; i--) {
+    const child = store.document.nodes[root.children[i]]
+    if (child?.type === 'section') return root.children[i]
+  }
+  return null
+}
+
 function handleDrop(e: DragEvent): void {
   isDraggingFromLib.value = false
   dropCursorPos.value = null
@@ -584,7 +841,9 @@ function handleDrop(e: DragEvent): void {
   const defaultGrid = pixelToGrid(dropX, dropY, 200, grid) // 200px default width
   if (defaultGrid.colSpan < 2) defaultGrid.colSpan = 3 // minimum 3 columns for new nodes
 
-  const newNodeId = store.doAddNode(componentType, store.document.rootId)
+  // Find the section under the drop point, fallback to first section or root
+  const targetParent = findSectionAtY(dropY) || store.document.rootId
+  const newNodeId = store.doAddNode(componentType, targetParent)
 
   if (newNodeId) {
     store.doUpdateGrid(newNodeId, defaultGrid, store.activeBreakpoint)
@@ -682,36 +941,7 @@ onUnmounted(() => {
   z-index: 55;
 }
 
-/* ── Distance indicator lines ─────────────────────── */
-.dist-line-v {
-  position: absolute;
-  width: 0;
-  border-left: 1px dashed #f43f5e;
-  pointer-events: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.dist-line-h {
-  position: absolute;
-  height: 0;
-  border-top: 1px dashed #f43f5e;
-  pointer-events: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.dist-label {
-  position: absolute;
-  background: #f43f5e;
-  color: #fff;
-  font-size: 10px;
-  font-weight: 600;
-  padding: 1px 5px;
-  border-radius: 3px;
-  white-space: nowrap;
-  line-height: 14px;
-}
+/* (dist-lines removed — replaced by grid-cell-guides) */
 
 /* ── Snap guide line ──────────────────────────────── */
 .snap-guide {
@@ -724,7 +954,7 @@ onUnmounted(() => {
   pointer-events: none;
   z-index: 55;
 }
-/* ── Grid Connection Guides (Wix-style) ───────────── */
+/* ── Grid Cell Guides (cell-boundary snap indicators) ─ */
 .grid-guide-line {
   position: absolute;
   height: 0;
@@ -734,6 +964,13 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.grid-guide-vertical {
+  height: auto;
+  width: 0 !important;
+  border-top: none;
+  border-left: 1px dashed #3b82f6;
 }
 
 .chk-dot-start, .chk-dot-end {
@@ -761,5 +998,23 @@ onUnmounted(() => {
   font-size: 10px;
   padding: 1px 4px;
   border-radius: 3px;
+}
+/* ── Alignment Guides (Smart Guides - Red) ────────── */
+.alignment-guide-line {
+  position: absolute;
+  pointer-events: none;
+  z-index: 55;
+  background-color: #f43f5e; /* Red */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.alignment-guide-vertical {
+  width: 1px;
+}
+
+.alignment-guide-horizontal {
+  height: 1px;
 }
 </style>

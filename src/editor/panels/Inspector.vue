@@ -76,11 +76,14 @@ function getSectionValues(section: InspectorSectionType): Record<string, unknown
   return values
 }
 
-function handleUpdate(payload: { key: string; value: unknown; target: 'props' | 'style' }): void {
+function handleUpdate(payload: { key: string; value: unknown; target: 'props' | 'style' | 'layout' }): void {
   if (!store.selectedNodeId) return
 
   if (payload.target === 'props') {
     store.doUpdateProps(store.selectedNodeId, { [payload.key]: payload.value })
+  } else if (payload.target === 'layout') {
+    // Layout updates handled via props for now
+    store.doUpdateProps(store.selectedNodeId, { layout: payload.value })
   } else if (payload.target === 'style') {
     store.doUpdateStyles(
       store.selectedNodeId,
