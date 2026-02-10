@@ -8,8 +8,26 @@
     @mouseleave="handleMouseLeave"
     @mousedown.stop="handleMouseDown"
   >
-    <!-- Container/Section: render children recursively -->
-    <template v-if="isContainer">
+    <!-- Section: children go into column-2 inner grid -->
+    <template v-if="node?.type === 'section'">
+      <div style="grid-column: 2; position: relative;" :style="sectionInnerGridStyle">
+        <NodeRenderer
+          v-for="childId in node.children"
+          :key="childId"
+          :node-id="childId"
+          :nodes="nodes"
+          :breakpoint="breakpoint"
+          :mode="mode"
+          :computed-grid="computedGrid"
+          @node-click="$emit('node-click', $event)"
+          @node-hover="$emit('node-hover', $event)"
+          @node-hover-leave="$emit('node-hover-leave')"
+          @node-mousedown="$emit('node-mousedown', $event)"
+        />
+      </div>
+    </template>
+    <!-- Container: render children directly -->
+    <template v-else-if="isContainer">
       <NodeRenderer
         v-for="childId in node.children"
         :key="childId"
@@ -65,6 +83,19 @@ const isContainer = computed(() => {
   return t === 'container' || t === 'section'
 })
 
+// Inner grid style for section's center column — page grid columns inside
+const sectionInnerGridStyle = computed(() => {
+  if (!props.computedGrid || node.value?.type !== 'section') return {}
+  const { columns, gutterWidth } = props.computedGrid
+  return {
+    display: 'grid',
+    gridTemplateColumns: `repeat(${columns.length}, 1fr)`,
+    columnGap: `${gutterWidth}px`,
+    width: '100%',
+    minHeight: 'inherit',
+  }
+})
+
 const computedStyles = computed(() => {
   if (!node.value) return {}
 
@@ -92,17 +123,18 @@ const computedStyles = computed(() => {
     }
   }
 
-  // ─── Section Node: Uses page grid for its children ─────
+  // ─── Section Node: 1fr 1200px 1fr centered layout ───────
   if (node.value.type === 'section' && props.computedGrid) {
-    const { columns, gutterWidth, marginWidth } = props.computedGrid
+    const { columns, gutterWidth } = props.computedGrid
+    const contentWidth = columns.length > 0 
+      ? (columns[columns.length - 1].x + columns[columns.length - 1].width) - columns[0].x
+      : 1200
     return {
       ...styles,
-      ...common,
+      cursor: props.mode === 'edit' ? 'default' : undefined,
+      userSelect: props.mode === 'edit' ? 'none' as const : undefined,
       display: 'grid',
-      gridTemplateColumns: `repeat(${columns.length}, 1fr)`,
-      columnGap: `${gutterWidth}px`,
-      paddingLeft: `${marginWidth}px`,
-      paddingRight: `${marginWidth}px`,
+      gridTemplateColumns: `1fr ${contentWidth}px 1fr`,
       alignItems: 'start',
       position: 'relative' as const,
       width: '100%',

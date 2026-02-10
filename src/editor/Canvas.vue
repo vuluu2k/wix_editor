@@ -345,7 +345,7 @@ const gridCellGuides = computed((): GridCellGuide[] => {
 type ResizePosition = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w'
 
 const resizeHandles = computed(() => {
-  const positions: { position: ResizePosition; style: Record<string, string> }[] = [
+  const allPositions: { position: ResizePosition; style: Record<string, string> }[] = [
     { position: 'nw', style: { top: '-5px', left: '-5px', cursor: 'nw-resize' } },
     { position: 'n', style: { top: '-5px', left: '50%', transform: 'translateX(-50%)', cursor: 'n-resize' } },
     { position: 'ne', style: { top: '-5px', right: '-5px', cursor: 'ne-resize' } },
@@ -355,7 +355,14 @@ const resizeHandles = computed(() => {
     { position: 'sw', style: { bottom: '-5px', left: '-5px', cursor: 'sw-resize' } },
     { position: 'w', style: { top: '50%', left: '-5px', transform: 'translateY(-50%)', cursor: 'w-resize' } },
   ]
-  return positions
+  // Section: only allow height resize (south handle)
+  if (store.selectedNodeId) {
+    const selectedNode = store.document.nodes[store.selectedNodeId]
+    if (selectedNode?.type === 'section') {
+      return allPositions.filter(p => p.position === 's')
+    }
+  }
+  return allPositions
 })
 
 let resizeState: {
@@ -497,6 +504,9 @@ function handleNodeMouseDown(payload: { nodeId: string; event: MouseEvent }): vo
 
   const node = store.document.nodes[payload.nodeId]
   if (!node) return
+
+  // Sections cannot be dragged
+  if (node.type === 'section') return
 
   const el = document.querySelector(`[data-node-id="${payload.nodeId}"]`) as HTMLElement | null
   if (!el || !artboardRef.value) return
@@ -732,9 +742,18 @@ function onDragNodeEnd(): void {
         }, store.activeBreakpoint)
         
     } else if (node && node.grid) {
+      // Check if element should be reparented to a different section
+      const el = document.querySelector(`[data-node-id="${dragNodeState.nodeId}"]`) as HTMLElement | null
+      const artRect = artboardRef.value?.getBoundingClientRect()
+      if (el && artRect) {
+        const elemCenterY = el.getBoundingClientRect().top - artRect.top + el.offsetHeight / 2
+        const targetSection = findSectionAtY(elemCenterY)
+        if (targetSection && targetSection !== node.parentId) {
+          // Reparent to new section
+          store.doMoveNode(dragNodeState.nodeId, targetSection, -1)
+        }
+      }
       // Standard Page Grid Drop
-      // Only if parent is Root or non-grid container (flow?)
-      // We assume Page Grid logic applies if not dropped in Grid Cell
       store.doUpdateGrid(
         dragNodeState.nodeId,
         { ...node.grid.base },
