@@ -1,0 +1,31 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#app {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+/* ── Override Ant Design dark header default ────────────── */
+.ant-layout-header {
+  background: #ffffff !important;
+  color: #1f2937 !important;
+  line-height: 1 !important;
+}
+
+/* ── Override Ant Layout Sider default dark bg ──────────── */
+.ant-layout-sider {
+  background: #ffffff !important;
+}
+
+/* ── Ant segmented control lighter look ─────────────────── */
+.ant-segmented {
+  background: #f3f4f6 !important;
+}
