@@ -51,16 +51,7 @@
 
       <a-divider type="vertical" class="bg-gray-300 mx-1" />
 
-      <a-tooltip title="Toggle Grid">
-        <a-button
-          type="text"
-          size="small"
-          :class="store.showGrid ? 'text-blue-500' : 'text-gray-400'"
-          @click="store.toggleGrid()"
-        >
-          <template #icon><AppstoreOutlined /></template>
-        </a-button>
-      </a-tooltip>
+
 
       <a-tooltip title="Export JSON">
         <a-button
@@ -117,7 +108,7 @@ const breakpointLabel = computed(() => {
     tablet: 'Tablet',
     mobile: 'Mobile',
   }
-  return map[store.activeBreakpoint]
+  return map[store.activeBreakpoint as Breakpoint]
 })
 
 function handleModeChange(value: string | number): void {
@@ -130,7 +121,7 @@ function handleBreakpointChange(value: string | number): void {
     Tablet: 'tablet',
     Mobile: 'mobile',
   }
-  store.setBreakpoint(map[value as string] || 'desktop')
+  store.setBreakpoint(map[value as keyof typeof map] || 'desktop')
 }
 
 function handleExport(): void {

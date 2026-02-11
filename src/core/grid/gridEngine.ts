@@ -179,63 +179,240 @@ export function calcContainerGridCell(
   y: number, // relative to container
   containerWidth: number,
   containerHeight: number,
-  layout: { cols: number | string, rows: number | string, rowGap?: number, colGap?: number, padding?: any }
+  layout: import('@/core/types/document').LayoutConfig
 ): { col: number, row: number, cellRect: { x: number, y: number, width: number, height: number } } {
-  const cols = typeof layout.cols === 'number' ? layout.cols : 1
-  const rows = typeof layout.rows === 'number' ? layout.rows : 1
-  const colGap = layout.colGap ?? 0
-  const rowGap = layout.rowGap ?? 0
-  const padding = layout.padding || { top: 0, left: 0, right: 0, bottom: 0 }
-
-  const availableWidth = Math.max(0, containerWidth - padding.left - padding.right)
-  const availableHeight = Math.max(0, containerHeight - padding.top - padding.bottom)
-
-  // Calculate generic cell size (assuming equal distribution for now)
-  const totalColGap = Math.max(0, (cols - 1) * colGap)
-  const colWidth = (availableWidth - totalColGap) / cols
-
-  const totalRowGap = Math.max(0, (rows - 1) * rowGap)
-  const rowHeight = (availableHeight - totalRowGap) / rows
-
-  // Find Column
+  // Use the robust computeContainerGrid function
+  const grid = computeContainerGrid(layout, containerWidth, containerHeight)
+  
+  // Find column
   let col = 1
-  for (let i = 0; i < cols; i++) {
-    const cellX = padding.left + i * (colWidth + colGap)
-    // Snap to closest center or just containment?
-    // Containment + gap split
-    if (x < cellX + colWidth + colGap / 2) {
+  for (let i = 0; i < grid.columns.length; i++) {
+    const c = grid.columns[i]
+    if (x < c.x + c.width + grid.gutterWidth / 2) {
       col = i + 1
       break
     }
     col = i + 1
   }
+  col = Math.max(1, Math.min(col, grid.columns.length))
 
-  // Find Row
+  // Find row
   let row = 1
-  for (let i = 0; i < rows; i++) {
-    const cellY = padding.top + i * (rowHeight + rowGap)
-    if (y < cellY + rowHeight + rowGap / 2) {
+  for (let i = 0; i < grid.rows.length; i++) {
+    const r = grid.rows[i]
+    if (y < r.x + r.width + grid.rowGap / 2) {
       row = i + 1
       break
     }
     row = i + 1
   }
+  row = Math.max(1, Math.min(row, grid.rows.length))
 
-  // Clamp
-  col = Math.max(1, Math.min(col, cols))
-  row = Math.max(1, Math.min(row, rows))
-
-  const finalX = padding.left + (col - 1) * (colWidth + colGap)
-  const finalY = padding.top + (row - 1) * (rowHeight + rowGap)
+  const finalCol = grid.columns[col - 1]
+  const finalRow = grid.rows[row - 1]
 
   return {
     col,
     row,
     cellRect: {
-      x: finalX,
-      y: finalY,
-      width: colWidth,
-      height: rowHeight
+      x: finalCol.x,
+      y: finalRow.x,
+      width: finalCol.width,
+      height: finalRow.width // height stored in width property of GridLine
     }
+  }
+}
+
+// ─── Container Grid Computation (2D) ─────────────────────
+
+export interface ComputedContainerGrid extends ComputedGrid {
+  rows: GridLine[]
+  rowGap: number
+  padding: { top: number; right: number; bottom: number; left: number }
+}
+
+/**
+ * Compute the 2D grid lines (cols & rows) for a container based on its LayoutConfig.
+ */
+export function computeContainerGrid(
+  layout: import('@/core/types/document').LayoutConfig,
+  width: number,
+  height: number
+): ComputedContainerGrid {
+  const padding = layout.padding || { top: 0, right: 0, bottom: 0, left: 0 }
+  const colGap = layout.colGap ?? layout.gap ?? 0
+  const rowGap = layout.rowGap ?? layout.gap ?? 0
+
+  const availableWidth = Math.max(0, width - padding.left - padding.right)
+  const availableHeight = Math.max(0, height - padding.top - padding.bottom)
+
+  // ─── Columns ───
+  // Default to 1 column if undefined
+  const colTracks = layout.columns?.length ? layout.columns : [{ value: 1, unit: 'fr' as const }]
+  const numCols = colTracks.length
+  
+  // Calculate fixed widths first
+  let usedWidth = 0
+  let totalFr = 0
+  
+  const colWidths = colTracks.map(track => {
+    if (track.unit === 'px') {
+      usedWidth += track.value
+      return track.value
+    } else if (track.unit === '%') {
+      const px = (track.value / 100) * availableWidth
+      usedWidth += px
+      return px
+    } else if (track.unit === 'fr' || track.unit === 'auto') {
+      totalFr += track.value
+      return 0 // placeholder
+    }
+    return 0
+  })
+
+  // Distribute remaining space to fr tracks
+  const totalGutterWidth = Math.max(0, (numCols - 1) * colGap)
+  const remainingWidth = Math.max(0, availableWidth - usedWidth - totalGutterWidth)
+  const frUnitWidth = totalFr > 0 ? remainingWidth / totalFr : 0
+
+  // Finalize column lines
+  const columns: GridLine[] = []
+  let currentX = padding.left
+  
+  colTracks.forEach((track, i) => {
+    let w = colWidths[i]
+    if (track.unit === 'fr' || track.unit === 'auto') {
+      w = track.value * frUnitWidth
+    }
+    columns.push({ x: currentX, width: w })
+    currentX += w + colGap
+  })
+
+
+  // ─── Rows ───
+  // Default to 1 row if undefined
+  const rowTracks = layout.rows?.length ? layout.rows : [{ value: 1, unit: 'fr' as const }]
+  const numRows = rowTracks.length
+  
+  // Calculate fixed heights
+  let usedHeight = 0
+  let totalRowFr = 0
+  
+  const rowHeights = rowTracks.map(track => {
+    if (track.unit === 'px') {
+      usedHeight += track.value
+      return track.value
+    } else if (track.unit === '%') {
+      const px = (track.value / 100) * availableHeight
+      usedHeight += px
+      return px
+    } else if (track.unit === 'fr' || track.unit === 'auto') {
+      totalRowFr += track.value
+      return 0 // placeholder
+    }
+    return 0
+  })
+
+  const totalRowGutterHeight = Math.max(0, (numRows - 1) * rowGap)
+  const remainingHeight = Math.max(0, availableHeight - usedHeight - totalRowGutterHeight)
+  const frRowUnitHeight = totalRowFr > 0 ? remainingHeight / totalRowFr : 0
+
+  const rows: GridLine[] = []
+  let currentY = padding.top
+  
+  rowTracks.forEach((track, i) => {
+    let h = rowHeights[i]
+    if (track.unit === 'fr' || track.unit === 'auto') {
+      h = track.value * frRowUnitHeight
+    }
+    rows.push({ x: currentY, width: h }) // 'width' here means height for rows
+    currentY += h + rowGap
+  })
+
+  return {
+    containerWidth: width,
+    columns,
+    rows,
+    gutterWidth: colGap,
+    marginWidth: 0, // not used for containers usually
+    rowGap,
+    padding
+  }
+}
+
+/**
+ * Convert pixel rect → grid data (2D support for containers).
+ */
+export function pixelToContainerGrid(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  grid: ComputedContainerGrid
+): NodeGridData {
+  // ─── Compute Column Span ───
+  let colStart = 1
+  // Find start column
+  for (let i = 0; i < grid.columns.length; i++) {
+    const col = grid.columns[i]
+    if (x < col.x + col.width + grid.gutterWidth / 2) {
+      colStart = i + 1
+      break
+    }
+    colStart = i + 1
+  }
+  
+  let colEnd = colStart
+  const rightEdge = x + width
+  for (let i = colStart - 1; i < grid.columns.length; i++) {
+    const col = grid.columns[i]
+    if (rightEdge <= col.x + col.width + grid.gutterWidth / 2) {
+      colEnd = i + 1
+      break
+    }
+    colEnd = i + 1
+  }
+  const colSpan = Math.max(1, colEnd - colStart + 1)
+
+  // ─── Compute Row Span ───
+  let rowStart = 1
+  // Find start row
+  for (let i = 0; i < grid.rows.length; i++) {
+    const r = grid.rows[i]
+    if (y < r.x + r.width + grid.rowGap / 2) { // r.width is height
+      rowStart = i + 1
+      break
+    }
+    rowStart = i + 1
+  }
+
+  let rowEnd = rowStart
+  const bottomEdge = y + height
+  for (let i = rowStart - 1; i < grid.rows.length; i++) {
+    const r = grid.rows[i]
+    if (bottomEdge <= r.x + r.width + grid.rowGap / 2) {
+      rowEnd = i + 1
+      break
+    }
+    rowEnd = i + 1
+  }
+  const rowSpan = Math.max(1, rowEnd - rowStart + 1)
+
+  // ─── Margins ───
+  const colLine = grid.columns[colStart - 1]
+  const rowLine = grid.rows[rowStart - 1]
+
+  const offsetLeft = x - colLine.x
+  const offsetTop = y - rowLine.x
+
+  return {
+    colStart,
+    colSpan,
+    rowStart,
+    rowSpan,
+    marginLeft: Math.round(offsetLeft),
+    marginTop: Math.round(offsetTop),
+    marginRight: 0, // Simplified for now
+    marginBottom: 0
   }
 }

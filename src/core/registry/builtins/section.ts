@@ -21,6 +21,12 @@ export const sectionComponent: ComponentRegistryEntry = {
       ],
     },
     {
+      title: 'Layout',
+      fields: [
+        { type: 'grid-layout', key: 'layout', label: 'Grid Configuration', target: 'layout' },
+      ],
+    },
+    {
       title: 'Design',
       fields: [
         { type: 'color', key: 'backgroundColor', label: 'Background Color', target: 'style' },

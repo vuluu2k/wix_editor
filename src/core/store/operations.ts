@@ -258,3 +258,31 @@ export function updateNodeMeta(
   node.meta = { ...node.meta, ...metaUpdate }
   return true
 }
+
+/**
+ * Update node layout (grid/flex config).
+ */
+export function updateNodeLayout(
+  doc: DocumentModel,
+  nodeId: string,
+  layoutUpdate: Partial<NonNullable<EditorNode['layout']>>
+): boolean {
+  const node = doc.nodes[nodeId]
+  if (!node) return false
+  
+  if (!node.layout) {
+    node.layout = { 
+        type: 'grid', 
+        columns: [{ value: 1, unit: 'fr' }],
+        rows: [{ value: 1, unit: 'fr' }],
+        colGap: 0,
+        rowGap: 0,
+        padding: { top: 0, right: 0, bottom: 0, left: 0 },
+        overflow: 'show',
+        ...layoutUpdate 
+    }
+  } else {
+    node.layout = { ...node.layout, ...layoutUpdate }
+  }
+  return true
+}

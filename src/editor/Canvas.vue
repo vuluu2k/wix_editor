@@ -12,11 +12,11 @@
       class="relative bg-white shadow-xl my-8 artboard"
       :style="artboardStyle"
     >
-      <!-- Grid Overlay -->
+      <!-- Grid Overlay (Page Grid - Only visible when Root is selected) -->
       <GridOverlay
         :config="gridConfig"
         :container-width="artboardWidth"
-        :visible="store.showGrid && store.mode === 'edit'"
+        :visible="store.selectedNodeId === store.document.rootId && store.mode === 'edit'"
       />
 
       <!-- Node Renderer -->
@@ -126,10 +126,10 @@ import { ref, computed, onMounted, onUnmounted, nextTick, watch, reactive } from
 import NodeRenderer from '@/core/renderer/NodeRenderer.vue'
 import GridOverlay from '@/core/grid/GridOverlay.vue'
 import { useEditorStore } from '@/core/store/editor.store'
-import { mergeResponsive } from '@/core/types/document'
-import { computeGrid, pixelToGrid, getColZoneLeft, getColZoneWidth, calcContainerGridCell, type NodeGridData } from '@/core/grid/gridEngine'
+import { mergeResponsive, type Breakpoint, type EditorNode } from '@/core/types/document'
+import { computeGrid, pixelToGrid, getColZoneLeft, getColZoneWidth, calcContainerGridCell, computeContainerGrid, pixelToContainerGrid, type NodeGridData, type ComputedContainerGrid } from '@/core/grid/gridEngine'
 import { snapRectToGrid, calcAlignmentGuides, type AlignmentGuide } from '@/core/grid/snapping'
-import type { GridConfig } from '@/core/types/grid'
+import type { GridConfig, ComputedGrid } from '@/core/types/grid'
 
 const store = useEditorStore()
 
@@ -138,11 +138,11 @@ const canvasRef = ref<HTMLElement | null>(null)
 const artboardRef = ref<HTMLElement | null>(null)
 
 
-const artboardWidth = computed(() => {
-  const bp = store.activeBreakpoint
-  const widthMap = { desktop: 1200, tablet: 768, mobile: 375 }
-  return widthMap[bp]
-})
+  const artboardWidth = computed(() => {
+    const bp = store.activeBreakpoint as Breakpoint
+    const widthMap: Record<Breakpoint, number> = { desktop: 1200, tablet: 768, mobile: 375 }
+    return widthMap[bp]
+  })
 
 const artboardStyle = computed(() => ({
   width: `${artboardWidth.value}px`,
@@ -150,7 +150,7 @@ const artboardStyle = computed(() => ({
 }))
 
 const gridConfig = computed((): GridConfig => {
-  return mergeResponsive(store.document.grid, store.activeBreakpoint) as GridConfig
+  return mergeResponsive(store.document.grid, store.activeBreakpoint) as unknown as GridConfig
 })
 
 const computedGridData = computed(() => computeGrid(gridConfig.value, artboardWidth.value))
@@ -160,7 +160,7 @@ const smartGuides = ref<AlignmentGuide[]>([])
 let dragOtherRects: { x: number; y: number; width: number; height: number; id: string }[] = []
 
 // State for Container Grid Snapping
-const dragGridCell = ref<{ col: number, row: number, rect: { x: number, y: number, width: number, height: number }, containerId: string } | null>(null)
+const dragGridCell = ref<(NodeGridData & { rect: { x: number, y: number, width: number, height: number }, containerId: string }) | null>(null)
 
 // ─── Selection & Hover Rects ─────────────────────────────
 const selectionRect = ref<Record<string, string> | null>(null)
@@ -351,7 +351,15 @@ const gridCellGuides = computed((): GridCellGuide[] => {
 type ResizePosition = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w'
 
 const resizeHandles = computed(() => {
-  const allPositions: { position: ResizePosition; style: Record<string, string> }[] = [
+  const isSection = store.selectedNode?.type === 'section'
+  if (isSection) {
+    // Section: only allow height resize (south handle)
+    return [
+      { position: 's', style: { bottom: '-5px', left: '50%', transform: 'translateX(-50%)', cursor: 's-resize' } }
+    ]
+  }
+
+  return [
     { position: 'nw', style: { top: '-5px', left: '-5px', cursor: 'nw-resize' } },
     { position: 'n', style: { top: '-5px', left: '50%', transform: 'translateX(-50%)', cursor: 'n-resize' } },
     { position: 'ne', style: { top: '-5px', right: '-5px', cursor: 'ne-resize' } },
@@ -361,42 +369,59 @@ const resizeHandles = computed(() => {
     { position: 'sw', style: { bottom: '-5px', left: '-5px', cursor: 'sw-resize' } },
     { position: 'w', style: { top: '50%', left: '-5px', transform: 'translateY(-50%)', cursor: 'w-resize' } },
   ]
-  // Section: only allow height resize (south handle)
-  if (store.selectedNodeId) {
-    const selectedNode = store.document.nodes[store.selectedNodeId]
-    if (selectedNode?.type === 'section') {
-      return allPositions.filter(p => p.position === 's')
-    }
-  }
-  return allPositions
 })
 
 let resizeState: {
-  active: boolean
-  position: ResizePosition
   startX: number
   startY: number
   startWidth: number
   startHeight: number
   startLeft: number
   startTop: number
+  position: string
+  gridType: 'page' | 'container'
+  parentGrid: ComputedGrid | ComputedContainerGrid
 } | null = null
 
-function startResize(e: MouseEvent, position: ResizePosition): void {
-  if (!store.selectedNodeId || !selectionRect.value) return
+function startResize(e: MouseEvent, position: string): void {
+  if (!store.selectedNodeId) return
 
-  resizeState = {
-    active: true,
-    position,
-    startX: e.clientX,
-    startY: e.clientY,
-    startWidth: parseFloat(selectionRect.value.width),
-    startHeight: parseFloat(selectionRect.value.height),
-    startLeft: parseFloat(selectionRect.value.left),
-    startTop: parseFloat(selectionRect.value.top),
+  const node = store.document.nodes[store.selectedNodeId]
+  if (!node) return
+
+  const rect = getNodeRectNumbers(store.selectedNodeId)
+  if (!rect) return
+
+  // Determine Parent Grid
+  let gridType: 'page' | 'container' = 'page'
+  let parentGrid: ComputedGrid | ComputedContainerGrid = computedGridData.value
+
+  const parentId = node.parentId
+  if (parentId && parentId !== store.document.rootId) {
+    const parentNode = store.document.nodes[parentId]
+    if (parentNode && parentNode.layout?.type === 'grid') {
+      const parentRect = getNodeRectNumbers(parentId)
+      if (parentRect) {
+        gridType = 'container'
+        parentGrid = computeContainerGrid(parentNode.layout, parentRect.width, parentRect.height)
+      }
+    }
   }
 
+  resizeState = {
+    startX: e.clientX,
+    startY: e.clientY,
+    startWidth: rect.width,
+    startHeight: rect.height,
+    startLeft: rect.left,
+    startTop: rect.top,
+    position,
+    gridType,
+    parentGrid
+  }
+  
   isDragging.value = true
+  store.saveSnapshot() // Save undo state before resize
   window.addEventListener('mousemove', onResizeMove)
   window.addEventListener('mouseup', onResizeEnd)
 }
@@ -421,60 +446,53 @@ function onResizeMove(e: MouseEvent): void {
   newHeight = Math.max(20, newHeight)
 
   // Convert pixel position to grid data
-  const grid = computedGridData.value
   const currentNode = store.document.nodes[store.selectedNodeId]
   
   if (currentNode && currentNode.grid) {
-    const oldGrid = currentNode.grid.base as NodeGridData // assume base for now or merge
-    let finalGrid = { ...oldGrid }
+    let finalGrid: NodeGridData | null = null
     let shouldUpdateGrid = false
 
-    // Helper to calculate span/marginRight based on fixed Left
-    const updateRightSide = () => {
-      const zoneLeft = getColZoneLeft(oldGrid.colStart, grid)
-      const currentMarginLeft = oldGrid.marginLeft ?? 0
-      const targetRightPixel = zoneLeft + currentMarginLeft + newWidth
-      
-      // Find colEnd
-      let colEnd = oldGrid.colStart
-      for (let i = oldGrid.colStart - 1; i < grid.columns.length; i++) {
-        const col = grid.columns[i]
-        const colRight = col.x + col.width
-        if (targetRightPixel <= colRight + grid.gutterWidth / 2) {
-          colEnd = i + 1
-          break
-        }
-        colEnd = i + 1
+    if (resizeState.gridType === 'container') {
+      const grid = resizeState.parentGrid as ComputedContainerGrid
+      // Need to find coordinate relative to parent
+      const parentRect = getNodeRectNumbers(currentNode.parentId!)
+      if (parentRect) {
+         // Calculate new relative position
+         // newLeft/newTop are relative to Artboard
+         // Parent is relative to Artboard
+         const relX = newLeft - parentRect.left
+         const relY = newTop - parentRect.top
+         
+         finalGrid = pixelToContainerGrid(relX, relY, newWidth, newHeight, grid)
+         shouldUpdateGrid = true
       }
-      const colSpan = Math.max(1, colEnd - oldGrid.colStart + 1)
-      const zoneWidth = getColZoneWidth(oldGrid.colStart, colSpan, grid)
-      
-      finalGrid.colSpan = colSpan
-      finalGrid.marginRight = Math.max(0, (zoneLeft + zoneWidth) - targetRightPixel)
-      shouldUpdateGrid = true
-    }
-
-    if (resizeState.position === 'e') {
-      // East: Lock Left/Top. Only update Span/Right.
-      updateRightSide()
-    } else if (resizeState.position === 's') {
-      // South: Lock everything. Only Height updates (below).
-      shouldUpdateGrid = false
-    } else if (resizeState.position === 'se') {
-      // South-East: Lock Left/Top. Update Span/Right.
-      updateRightSide()
     } else {
-      // Others: Use full recalculation
-      finalGrid = pixelToGrid(newLeft, newTop, newWidth, grid)
-      shouldUpdateGrid = true
+      // Page Grid
+      const grid = resizeState.parentGrid as ComputedGrid
+      // Page grid logic (only column snapping for now)
+      if (['e', 'w'].includes(resizeState.position) || resizeState.position.length === 2) {
+         finalGrid = pixelToGrid(newLeft, newTop, newWidth, grid)
+         shouldUpdateGrid = true
+      }
     }
 
-    if (shouldUpdateGrid) {
-      store.doUpdateGrid(store.selectedNodeId, finalGrid, store.activeBreakpoint)
+    if (shouldUpdateGrid && finalGrid) {
+      if (resizeState.gridType === 'page') {
+         // Prevent row updates on page grid resize (keep existing if any)
+         // Actually pixelToGrid returns marginTop, but we want to avoid changing vertical grid props if only horizontal resize?
+         // But logic above handles it via 'position' check.
+         if (['n', 's'].includes(resizeState.position)) {
+             shouldUpdateGrid = false
+         }
+      }
+
+      if (shouldUpdateGrid) {
+         store.doUpdateGrid(store.selectedNodeId, finalGrid, store.activeBreakpoint)
+      }
     }
   }
 
-  // Update height in styles (height is not grid-managed)
+  // Update height in styles
   store.doUpdateStyles(
     store.selectedNodeId,
     { height: `${Math.round(newHeight)}px` },
@@ -534,11 +552,12 @@ function handleNodeMouseDown(payload: { nodeId: string; event: MouseEvent }): vo
 
   // Pre-calculate other nodes for smart alignment
   dragOtherRects = []
-  Object.values(store.document.nodes).forEach(n => {
-      if (n.id === payload.nodeId || n.id === store.document.rootId) return
-      const rect = getNodeRectNumbers(n.id)
+  Object.values(store.document.nodes).forEach((n) => {
+      const node = n as EditorNode
+      if (node.id === payload.nodeId || node.id === store.document.rootId) return
+      const rect = getNodeRectNumbers(node.id)
       if (rect) {
-          dragOtherRects.push({ ...rect, x: rect.left, y: rect.top, id: n.id })
+          dragOtherRects.push({ ...rect, x: rect.left, y: rect.top, id: node.id })
       }
   })
 
@@ -594,71 +613,55 @@ function onDragNodeMove(e: MouseEvent): void {
   }
 
   if (bestContainer) {
-      // Calculate snap to container grid
+      // Container Grid Logic
+      const grid = computeContainerGrid(bestContainer.node.layout!, bestContainer.width, bestContainer.height)
       const relX = newLeft - bestContainer.x
       const relY = newTop - bestContainer.y
       
-      const snap = calcContainerGridCell(
-          relX, relY, 
-          bestContainer.width, bestContainer.height, 
-          {
-              ...bestContainer.node.layout!,
-              cols: bestContainer.node.layout!.cols ?? 1,
-              rows: bestContainer.node.layout!.rows ?? 1
-          }
+      const gridData = pixelToContainerGrid(
+        relX, relY, 
+        dragNodeState.nodeWidth, 
+        dragNodeState.nodeHeight, 
+        grid
       )
 
+      // Calculate the visual rect for the highlight (blue box)
+      const startCol = grid.columns[gridData.colStart - 1]
+      const endCol = grid.columns[gridData.colStart + gridData.colSpan - 2] || startCol
+      
+      const startRow = grid.rows[(gridData.rowStart || 1) - 1]
+      const endRow = grid.rows[(gridData.rowStart || 1) + (gridData.rowSpan || 1) - 2] || startRow
+
+      const cellRectX = startCol.x
+      const cellRectY = startRow.x
+      const cellRectW = (endCol.x + endCol.width) - startCol.x + (gridData.colSpan - 1) * grid.gutterWidth
+      const cellRectH = (endRow.x + endRow.width) - startRow.x + ((gridData.rowSpan || 1) - 1) * grid.rowGap
+
       dragGridCell.value = {
-          col: snap.col,
-          row: snap.row,
+          ...gridData,
           rect: {
-              x: bestContainer.x + snap.cellRect.x,
-              y: bestContainer.y + snap.cellRect.y,
-              width: snap.cellRect.width,
-              height: snap.cellRect.height
+              x: bestContainer.x + cellRectX,
+              y: bestContainer.y + cellRectY,
+              width: cellRectW,
+              height: cellRectH
           },
           containerId: bestContainer.id
       }
       
-      // Snap ghost to cell
-      // Center the node in the cell or fill it? 
-      // For now, let's just highlight the cell and keep ghost flowing?
-      // Or snap ghost to top-left of cell.
-      // Let's snap ghost to cell top-left + some padding validation? 
-      // Actually, if we snap, we should just show the cell highlight and snap the ghost to the cell center/top-left.
+      // Snap visual position to cell start + computed margin
+      newLeft = bestContainer.x + cellRectX + (gridData.marginLeft || 0)
+      const newTopGrid = bestContainer.y + cellRectY + (gridData.marginTop || 0)
       
-      newLeft = bestContainer.x + snap.cellRect.x
-      // newTop = bestContainer.y + snap.cellRect.y -- Let's not vertical snap hard if we want to drag inside cell?
-      // But grid cell usually means "fills cell" or "aligns to cell".
-      // Let's snap strict for now.
-      
-      // We don't update finalTop/Left variables yet, we just update the ghost visual via store potentially?
-      // Wait, we are calculating finalLeft/Top for `pixelToGrid` below.
-      // If we are in Grid Container mode, `pixelToGrid` (Page Grid) is irrelevant!
-      
-      // We should SKIP the rest of the logic if in Grid Container mode.
+      const node = store.document.nodes[dragNodeState.nodeId]
+      if (node) {
+          const styleBase = node.styles.base || {}
+          styleBase.position = 'absolute'
+          styleBase.left = `${newLeft}px`
+          styleBase.top = `${newTopGrid}px`
+      }
       
       activeSnapLines.value = []
       smartGuides.value = []
-      
-      // Note: We are NOT updating the node's position in the store here because that would trigger "Page Grid" logic in renderer.
-      // We rely on the "dragGridCell" overlay to show where it will drop.
-      // But the "ghost" (rendered node) still follows mouse unless we hack it.
-      // Actually, we SHOULD update the node position to match the cell so user sees it in place.
-      // But we need to make sure we don't apply "Page Grid" quantization on it.
-      
-      // Update node visual position directly (no history spam)
-      const node = store.document.nodes[dragNodeState.nodeId]
-      if (node) {
-          // Temporarily force absolute to render at snapped position
-          // We'll reset this on drop
-          const styleBase = node.styles.base || {}
-          styleBase.position = 'absolute'
-          styleBase.left = `${bestContainer.x + snap.cellRect.x}px`
-          styleBase.top = `${bestContainer.y + snap.cellRect.y}px`
-          styleBase.width = `${snap.cellRect.width}px`
-          styleBase.height = `${snap.cellRect.height}px`
-      }
       
   } else {
       dragGridCell.value = null
@@ -728,18 +731,24 @@ function onDragNodeEnd(): void {
     const node = store.document.nodes[dragNodeState.nodeId]
     
     if (dragGridCell.value) {
+        const { containerId, ...gridData } = dragGridCell.value
+
         // Handle Drop into Grid Container
-        store.doMoveNode(dragNodeState.nodeId, dragGridCell.value.containerId, -1)
+        // Reparent if needed
+        if (dragNodeState.nodeId && containerId !== store.document.nodes[dragNodeState.nodeId].parentId) {
+             store.doMoveNode(dragNodeState.nodeId, containerId, -1)
+        }
         
         // Update Grid Props for Container Child
         store.doUpdateGrid(dragNodeState.nodeId, {
-            colStart: dragGridCell.value.col,
-            colSpan: 1, // Default to 1 cell
-            rowStart: dragGridCell.value.row,
-            rowSpan: 1,
-            marginLeft: 0,
-            marginRight: 0,
-            marginTop: 0
+            colStart: gridData.colStart,
+            colSpan: gridData.colSpan,
+            rowStart: gridData.rowStart,
+            rowSpan: gridData.rowSpan,
+            marginLeft: gridData.marginLeft || 0,
+            marginRight: gridData.marginRight || 0,
+            marginTop: gridData.marginTop || 0,
+            marginBottom: gridData.marginBottom || 0
         }, store.activeBreakpoint)
         
         // Reset absolute positioning styles if any
@@ -854,27 +863,71 @@ function handleDrop(e: DragEvent): void {
   const componentType = e.dataTransfer.getData('component-type')
   if (!componentType || !artboardRef.value) return
 
-  const artboardRect = artboardRef.value.getBoundingClientRect()
-  let dropX = e.clientX - artboardRect.left
-  const dropY = e.clientY - artboardRect.top
-
-  const snapResult = snapRectToGrid(dropX, 100, computedGridData.value, gridConfig.value.snapTolerance)
-  dropX = snapResult.x
-
-  // Convert drop position to grid data
-  const grid = computedGridData.value
-  const defaultGrid = pixelToGrid(dropX, dropY, 200, grid) // 200px default width
-  if (defaultGrid.colSpan < 2) defaultGrid.colSpan = 3 // minimum 3 columns for new nodes
-
-  // Find the section under the drop point, fallback to first section or root
-  const targetParent = findSectionAtY(dropY) || store.document.rootId
-  const newNodeId = store.doAddNode(componentType, targetParent)
-
-  if (newNodeId) {
-    store.doUpdateGrid(newNodeId, defaultGrid, store.activeBreakpoint)
-    store.selectNode(newNodeId)
-    nextTick(updateSelectionRect)
+  // 1. Find target parent (deepest container or section)
+  const elements = document.elementsFromPoint(e.clientX, e.clientY)
+  let targetNodeId: string | null = null
+  
+  for (const el of elements) {
+      if (el instanceof HTMLElement && el.dataset.nodeId) {
+          const node = store.document.nodes[el.dataset.nodeId]
+          // Drop into Container or Section. 
+          // If it's a basic container (div) without grid, we can still drop into it?
+          // Assuming 'container' type can accept children.
+          if (node && (node.type === 'container' || node.type === 'section')) {
+              targetNodeId = node.id
+              break // Found deepest
+          }
+      }
   }
+  
+  // Fallback to section or root
+  if (!targetNodeId) {
+       const rect = artboardRef.value.getBoundingClientRect()
+       const relY = e.clientY - rect.top
+       targetNodeId = findSectionAtY(relY) || store.document.rootId
+  }
+
+  // 2. Add Node
+  const newNodeId = store.doAddNode(componentType, targetNodeId)
+  if (!newNodeId) return
+  
+  // 3. Calculate Grid Position
+  const targetNode = store.document.nodes[targetNodeId]
+  const el = document.querySelector(`[data-node-id="${targetNodeId}"]`) as HTMLElement
+  
+  if (targetNode && el) {
+      let gridData;
+      
+      if (targetNode.layout?.type === 'grid') {
+          // Custom Container Grid
+          const rect = el.getBoundingClientRect()
+          const relX = e.clientX - rect.left
+          const relY = e.clientY - rect.top
+          
+          const containerGrid = computeContainerGrid(targetNode.layout, rect.width, rect.height)
+          gridData = pixelToContainerGrid(relX, relY, 150, 50, containerGrid) // default size
+          
+          // Ensure it's not too small or large?
+          // pixelToContainerGrid handles OOB?
+          
+      } else {
+          // Page Grid (Default)
+          const artRect = artboardRef.value.getBoundingClientRect()
+          let dropX = e.clientX - artRect.left
+          const dropY = e.clientY - artRect.top
+          
+          const snapResult = snapRectToGrid(dropX, 100, computedGridData.value, gridConfig.value.snapTolerance)
+          dropX = snapResult.x
+          
+          gridData = pixelToGrid(dropX, dropY, 200, computedGridData.value)
+          if (gridData.colSpan < 2) gridData.colSpan = 3
+      }
+      
+      store.doUpdateGrid(newNodeId, gridData, store.activeBreakpoint)
+  }
+
+  store.selectNode(newNodeId)
+  nextTick(updateSelectionRect)
 }
 
 // ─── Event Handlers ──────────────────────────────────────

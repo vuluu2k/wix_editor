@@ -69,6 +69,14 @@ function getSectionValues(section: InspectorSectionType): Record<string, unknown
   for (const field of section.fields) {
     if (field.target === 'props') {
       values[field.key] = store.selectedNode.props[field.key]
+    } else if (field.target === 'layout') {
+      // For 'layout' target, we read from node.layout
+      const layout = store.selectedNode.layout || {}
+      if (field.key === 'layout' && field.type === 'grid-layout') {
+         values[field.key] = layout
+      } else {
+         values[field.key] = (layout as any)[field.key]
+      }
     } else {
       values[field.key] = computedStyles[field.key]
     }
@@ -82,8 +90,12 @@ function handleUpdate(payload: { key: string; value: unknown; target: 'props' | 
   if (payload.target === 'props') {
     store.doUpdateProps(store.selectedNodeId, { [payload.key]: payload.value })
   } else if (payload.target === 'layout') {
-    // Layout updates handled via props for now
-    store.doUpdateProps(store.selectedNodeId, { layout: payload.value })
+    // Layout updates handled via dedicated action
+    if (payload.key === 'layout' && typeof payload.value === 'object') {
+      store.doUpdateLayout(store.selectedNodeId, payload.value as any)
+    } else {
+      store.doUpdateLayout(store.selectedNodeId, { [payload.key]: payload.value })
+    }
   } else if (payload.target === 'style') {
     store.doUpdateStyles(
       store.selectedNodeId,

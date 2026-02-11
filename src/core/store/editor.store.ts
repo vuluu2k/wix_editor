@@ -12,6 +12,7 @@ import {
   moveNode,
   duplicateNode,
   updateNodeMeta,
+  updateNodeLayout,
 } from './operations'
 import type { NodeGridData } from '@/core/grid/gridEngine'
 
@@ -22,7 +23,7 @@ export const useEditorStore = defineStore('editor', () => {
   const hoveredNodeId = ref<string | null>(null)
   const activeBreakpoint = ref<Breakpoint>('desktop')
   const mode = ref<'edit' | 'preview'>('edit')
-  const showGrid = ref(true)
+
 
   // ─── History ───────────────────────────────────────────
   const undoStack = ref<DocumentModel[]>([])
@@ -87,9 +88,7 @@ export const useEditorStore = defineStore('editor', () => {
     mode.value = m
   }
 
-  function toggleGrid(): void {
-    showGrid.value = !showGrid.value
-  }
+
 
   function doAddNode(type: string, parentId: string, index?: number): string | undefined {
     saveSnapshot()
@@ -151,6 +150,14 @@ export const useEditorStore = defineStore('editor', () => {
     return updateNodeGrid(document.value, nodeId, gridUpdate, breakpoint)
   }
 
+  function doUpdateLayout(
+    nodeId: string,
+    layoutUpdate: Partial<NonNullable<EditorNode['layout']>>
+  ): boolean {
+    saveSnapshot()
+    return updateNodeLayout(document.value, nodeId, layoutUpdate)
+  }
+
   function loadDocument(doc: DocumentModel): void {
     saveSnapshot()
     document.value = cloneDeep(doc)
@@ -169,7 +176,7 @@ export const useEditorStore = defineStore('editor', () => {
     hoveredNodeId,
     activeBreakpoint,
     mode,
-    showGrid,
+
 
     // Computed
     canUndo,
@@ -185,7 +192,7 @@ export const useEditorStore = defineStore('editor', () => {
     hoverNode,
     setBreakpoint,
     setMode,
-    toggleGrid,
+
     doAddNode,
     doDeleteNode,
     doUpdateProps,
@@ -194,7 +201,9 @@ export const useEditorStore = defineStore('editor', () => {
     doDuplicateNode,
     doUpdateMeta,
     doUpdateGrid,
+    doUpdateLayout,
     loadDocument,
     exportDocument,
+    saveSnapshot,
   }
 })
