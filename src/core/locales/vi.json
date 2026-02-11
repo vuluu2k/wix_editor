@@ -1,0 +1,16 @@
+{
+  "editor": {
+    "addSection": "Thêm Section",
+    "section": "Phần",
+    "container": "Hộp chứa",
+    "text": "Văn bản",
+    "button": "Nút",
+    "image": "Hình ảnh",
+    "layers": "Lớp",
+    "components": "Thành phần",
+    "inspector": "Thuộc tính",
+    "props": "Thông số",
+    "styles": "Kiểu dáng",
+    "events": "Sự kiện"
+  }
+}

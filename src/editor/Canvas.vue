@@ -336,9 +336,15 @@ const gridCellGuides = computed((): GridCellGuide[] => {
     })
   }
 
-  // Return only the 2 nearest guides
-  candidates.sort((a, b) => a.distance - b.distance)
-  return candidates.slice(0, 2)
+  // Return the nearest horizontal and nearest vertical guide (2 perpendicular edges)
+  const hGuides = candidates.filter(c => c.orientation === 'h').sort((a, b) => a.distance - b.distance)
+  const vGuides = candidates.filter(c => c.orientation === 'v').sort((a, b) => a.distance - b.distance)
+
+  const result: GridCellGuide[] = []
+  if (hGuides.length > 0) result.push(hGuides[0])
+  if (vGuides.length > 0) result.push(vGuides[0])
+  
+  return result
 })
 
 // ─── Resize Handles ──────────────────────────────────────

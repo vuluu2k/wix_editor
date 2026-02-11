@@ -1,0 +1,16 @@
+{
+  "editor": {
+    "addSection": "Add Section",
+    "section": "Section",
+    "container": "Container",
+    "text": "Text",
+    "button": "Button",
+    "image": "Image",
+    "layers": "Layers",
+    "components": "Components",
+    "inspector": "Inspector",
+    "props": "Props",
+    "styles": "Styles",
+    "events": "Events"
+  }
+}

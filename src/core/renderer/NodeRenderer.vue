@@ -1,5 +1,6 @@
 <template>
   <div
+    :class="['node-item', mode === 'edit' ? 'group' : '']"
     :style="computedStyles"
     :data-node-id="node.id"
     :data-node-type="node.type"
@@ -24,6 +25,13 @@
           @node-hover-leave="$emit('node-hover-leave')"
           @node-mousedown="$emit('node-mousedown', $event)"
         />
+      </div>
+       <!-- Add Section Button (Visible when focused or child focused) -->
+      <div v-if="mode === 'edit' && isSectionFocused" 
+           class="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 z-[60] pointer-events-auto">
+        <button class="bg-white hover:bg-blue-50 text-blue-600 border border-blue-600 text-xs px-3 py-1.5 rounded-full shadow-sm flex items-center gap-1 transition-colors">
+           <span class="text-lg leading-none font-light">+</span> {{ t('editor.addSection') }}
+        </button>
       </div>
     </template>
     <!-- Container: render children directly -->
@@ -51,6 +59,8 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { useEditorStore } from '@/core/store/editor.store'
 import type { Breakpoint, EditorNode } from '@/core/types/document'
 import type { ComputedGrid } from '@/core/types/grid'
 import { resolveComponent } from './resolveComponent'
@@ -71,6 +81,9 @@ const emit = defineEmits<{
   'node-mousedown': [payload: { nodeId: string; event: MouseEvent }]
 }>()
 
+const store = useEditorStore()
+const { t } = useI18n()
+
 const node = computed(() => props.nodes[props.nodeId])
 
 const entry = computed(() => {
@@ -81,6 +94,29 @@ const entry = computed(() => {
 const isContainer = computed(() => {
   const t = node.value?.type
   return t === 'container' || t === 'section'
+})
+
+// Check if section is focused OR any descendant is focused
+const isSectionFocused = computed(() => {
+  if (node.value?.type !== 'section') return false
+  if (!store.selectedNodeId) return false
+  
+  // 1. Is section itself selected?
+  if (store.selectedNodeId === props.nodeId) return true
+  
+  // 2. Is selected node a descendant of this section?
+  let currentId: string | null = store.selectedNodeId
+  while (currentId) {
+    // If we reached root without finding this section, stop
+    if (!props.nodes[currentId]) break 
+    
+    if (props.nodes[currentId].id === props.nodeId) return true // Should be caught by #1 but safe check
+    if (props.nodes[currentId].parentId === props.nodeId) return true
+    
+    currentId = props.nodes[currentId].parentId
+  }
+  
+  return false
 })
 
 // Inner grid style for section's center column — page grid columns inside
@@ -138,6 +174,8 @@ const computedStyles = computed(() => {
       alignItems: 'start',
       position: 'relative' as const,
       width: '100%',
+      borderTop: props.mode === 'edit' ? '1px dashed rgba(59, 130, 246, 0.3)' : undefined,
+      borderBottom: props.mode === 'edit' ? '1px dashed rgba(59, 130, 246, 0.3)' : undefined,
     }
   }
 
