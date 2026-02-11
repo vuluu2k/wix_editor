@@ -55,6 +55,9 @@ import RightPanel from '@/editor/RightPanel.vue'
 import ComponentDrawer from '@/editor/drawers/ComponentDrawer.vue'
 import LayersDrawer from '@/editor/drawers/LayersDrawer.vue'
 import { useUiStore } from '@/core/store/ui.store'
+const props = defineProps<{
+  siteId?: string
+}>()
 
 const uiStore = useUiStore()
 </script>

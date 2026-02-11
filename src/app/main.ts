@@ -5,11 +5,13 @@ import 'ant-design-vue/dist/reset.css'
 import '@/styles/main.css'
 import App from './App.vue'
 import i18n from '@/core/i18n'
+import router from '@/router'
 
 const app = createApp(App)
 const pinia = createPinia()
 
 app.use(pinia)
+app.use(router)
 app.use(Antd)
 app.use(i18n)
 app.mount('#app')

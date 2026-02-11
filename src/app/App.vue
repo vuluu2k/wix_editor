@@ -1,7 +1,7 @@
 <template>
-  <EditorLayout />
+  <router-view />
 </template>
 
 <script setup lang="ts">
-import EditorLayout from '@/editor/EditorLayout.vue'
+// App.vue now delegates to router
 </script>
