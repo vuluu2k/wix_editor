@@ -13,11 +13,12 @@
       :style="artboardStyle"
     >
       <!-- Grid Overlay (Page Grid - Only visible when Root is selected) -->
-      <GridOverlay
+      <!-- Grid Overlay (Page Grid - Disabled per user request: Root is wrapper only) -->
+      <!-- <GridOverlay
         :config="gridConfig"
         :container-width="artboardWidth"
         :visible="store.selectedNodeId === store.document.rootId && store.mode === 'edit'"
-      />
+      /> -->
 
       <!-- Node Renderer -->
       <NodeRenderer
@@ -102,6 +103,18 @@
             height: `${dragGridCell.rect.height}px`
         }"
       />
+
+      <!-- Reorder Indicator (Section Reorder) -->
+      <div
+        v-if="reorderIndicator"
+        class="absolute left-0 w-full h-1 bg-blue-500 z-[60] pointer-events-none transition-all duration-75"
+        :style="{
+          top: `${reorderIndicator.y}px`
+        }"
+      >
+        <div class="absolute left-0 -top-1.5 w-3 h-3 bg-blue-500 rounded-full"></div>
+        <div class="absolute right-0 -top-1.5 w-3 h-3 bg-blue-500 rounded-full"></div>
+      </div>
 
       <!-- Snap Guide Lines -->
       <div
@@ -520,7 +533,11 @@ let dragNodeState: {
   nodeHeight: number
   moved: boolean
   snapshotSaved: boolean
+  isSection: boolean // Track if dragging a section
 } | null = null
+
+// Reorder indicator state
+const reorderIndicator = ref<{ y: number; index: number; parentId: string } | null>(null)
 
 function handleNodeMouseDown(payload: { nodeId: string; event: MouseEvent }): void {
   if (store.mode !== 'edit') return
@@ -529,8 +546,8 @@ function handleNodeMouseDown(payload: { nodeId: string; event: MouseEvent }): vo
   const node = store.document.nodes[payload.nodeId]
   if (!node) return
 
-  // Sections cannot be dragged
-  if (node.type === 'section') return
+  // ALLOW section dragging now, but mark it
+  const isSection = node.type === 'section'
 
   const el = document.querySelector(`[data-node-id="${payload.nodeId}"]`) as HTMLElement | null
   if (!el || !artboardRef.value) return
@@ -548,18 +565,22 @@ function handleNodeMouseDown(payload: { nodeId: string; event: MouseEvent }): vo
     nodeHeight: nodeRect.height,
     moved: false,
     snapshotSaved: false,
+    isSection
   }
 
-  // Pre-calculate other nodes for smart alignment
+  // Pre-calculate other nodes for smart alignment (SKIP if section)
   dragOtherRects = []
-  Object.values(store.document.nodes).forEach((n) => {
-      const node = n as EditorNode
-      if (node.id === payload.nodeId || node.id === store.document.rootId) return
-      const rect = getNodeRectNumbers(node.id)
-      if (rect) {
-          dragOtherRects.push({ ...rect, x: rect.left, y: rect.top, id: node.id })
-      }
-  })
+  if (!isSection) {
+      Object.values(store.document.nodes).forEach((n) => {
+          const node = n as EditorNode
+          if (node.id === payload.nodeId || node.id === store.document.rootId) return
+          if (node.type === 'section') return // Don't snap to sections for now?
+          const rect = getNodeRectNumbers(node.id)
+          if (rect) {
+              dragOtherRects.push({ ...rect, x: rect.left, y: rect.top, id: node.id })
+          }
+      })
+  }
 
   window.addEventListener('mousemove', onDragNodeMove)
   window.addEventListener('mouseup', onDragNodeEnd)
@@ -576,9 +597,64 @@ function onDragNodeMove(e: MouseEvent): void {
   dragNodeState.moved = true
 
   if (!dragNodeState.snapshotSaved) {
+    store.saveSnapshot()
     dragNodeState.snapshotSaved = true
   }
 
+  // ─── SECTION REORDERING LOGIC ───
+  if (dragNodeState.isSection) {
+      // Find insertion index based on Y
+      if (!artboardRef.value) return
+      
+      const mouseRelY = e.clientY - artboardRef.value.getBoundingClientRect().top
+      const root = store.document.nodes[store.document.rootId]
+      
+      // Find all sibling sections
+      const sections = root.children.map(id => {
+          const rect = getNodeRectNumbers(id)
+          return { id, y: rect ? rect.top : 0, height: rect ? rect.height : 0 }
+      }).filter(s => s.id !== dragNodeState!.nodeId) // Exclude self
+      
+      // Determine index
+      let insertIndex = sections.length
+      let indicatorY = 0
+      
+      // Simple logic: find first section that distinctively starts BELOW mouse
+      // Or find split point
+      // Let's use midpoints
+      for (let i = 0; i < sections.length; i++) {
+          const sec = sections[i]
+          const mid = sec.y + sec.height / 2
+          if (mouseRelY < mid) {
+              insertIndex = i
+              indicatorY = sec.y
+              break
+          }
+          // If at end
+          if (i === sections.length - 1) {
+              indicatorY = sec.y + sec.height
+          }
+      }
+      
+      // Emulate visual drag (optional: translate the dragged element)
+      const el = document.querySelector(`[data-node-id="${dragNodeState.nodeId}"]`) as HTMLElement
+      if (el) {
+          el.style.transform = `translateY(${dy}px)`
+          el.style.zIndex = '100'
+          el.style.position = 'relative' // Keep it relative but translated
+          // Don't set absolute top/left!
+      }
+
+      reorderIndicator.value = {
+          y: indicatorY,
+          index: insertIndex,
+          parentId: store.document.rootId
+      }
+      return
+  }
+
+  // ─── STANDARD ELEMENT DRAG (GRID/ABSOLUTE) ───
+  
   let newLeft = Math.max(0, dragNodeState.startLeft + dx)
   const newTop = Math.max(0, dragNodeState.startTop + dy)
 
@@ -602,8 +678,6 @@ function onDragNodeMove(e: MouseEvent): void {
           const node = store.document.nodes[other.id]
           if (node && node.layout?.type === 'grid') {
               // Prefer smallest container by area (deepest)
-              // But ensure we compare apples to apples. 
-              // Actually, bestArea logic (smallest container) is still good.
               if (other.width * other.height < bestArea) {
                   bestArea = other.width * other.height
                   bestContainer = { ...other, node }
@@ -727,9 +801,26 @@ function onDragNodeMove(e: MouseEvent): void {
 }
 
 function onDragNodeEnd(): void {
-  if (dragNodeState?.moved) {
-    const node = store.document.nodes[dragNodeState.nodeId]
-    
+  const node = store.document.nodes[dragNodeState?.nodeId || '']
+  
+  if (dragNodeState?.isSection && node) {
+      // Reorder Section
+      if (reorderIndicator.value) {
+          store.doMoveNode(node.id, store.document.rootId, reorderIndicator.value.index)
+      }
+      
+      // CLEANUP STYLE
+      const el = document.querySelector(`[data-node-id="${node.id}"]`) as HTMLElement
+      if (el) {
+          el.style.transform = ''
+          el.style.zIndex = ''
+          // ensure position is relative
+          store.doUpdateStyles(node.id, { position: 'relative', top: 'auto', left: 'auto' }, store.activeBreakpoint)
+      }
+      
+      reorderIndicator.value = null
+      
+  } else if (dragNodeState?.moved && node) {
     if (dragGridCell.value) {
         const { containerId, ...gridData } = dragGridCell.value
 
@@ -756,8 +847,10 @@ function onDragNodeEnd(): void {
             left: 'auto', top: 'auto', position: 'relative'
         }, store.activeBreakpoint)
         
-    } else if (node && node.grid) {
-      // Check if element should be reparented to a different section
+    } else if (node.grid) {
+      // Check if element should be reparented to a different section (only if NOT a section itself)
+      // (This block is for normal elements)
+      
       const el = document.querySelector(`[data-node-id="${dragNodeState.nodeId}"]`) as HTMLElement | null
       const artRect = artboardRef.value?.getBoundingClientRect()
       if (el && artRect) {
